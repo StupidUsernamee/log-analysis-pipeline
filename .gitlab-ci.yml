@@ -1,50 +1,75 @@
-# This file is a template, and might need editing before it works on your project.
-# This is a sample GitLab CI/CD configuration file that should run without any modifications.
-# It demonstrates a basic 3 stage CI/CD pipeline. Instead of real tests or scripts,
-# it uses echo commands to simulate the pipeline execution.
-#
-# A pipeline is composed of independent jobs that run scripts, grouped into stages.
-# Stages run in sequential order, but jobs within stages run in parallel.
-#
-# For more information, see: https://docs.gitlab.com/ee/ci/yaml/#stages
-#
-# You can copy and paste this template into a new `.gitlab-ci.yml` file.
-# You should not add this template to an existing `.gitlab-ci.yml` file by using the `include:` keyword.
-#
-# To contribute improvements to CI/CD templates, please follow the Development guide at:
-# https://docs.gitlab.com/development/cicd/templates/
-# This specific template is located at:
-# https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/ci/templates/Getting-Started.gitlab-ci.yml
+### IMPORTANT NOTE:
+###   DO not try to deploy until all the comment files, with single(#) are removed.
 
-stages:          # List of stages for jobs, and their order of execution
+### This yml file is CI/CD pipeline containing 3 stages
+### build-stage:
+###   tries to build the data-pipeline using docker-compose and checks the yml file
+### test-stage:
+###   tries to run the data-pipeline. it first checks if kafka and cassandra services are healthy.
+###   If so, it will run the producer service.
+###   If all done, test-stage passed successfully
+### deploy-stage:
+###   tries to deploy data-pipeline to the server by connecting to it by ssh protocol,:workflow:
+###   pulling from git repo and compose up.
+
+
+stages:
   - build
   - test
   - deploy
 
-build-job:       # This job runs in the build stage, which runs first.
+
+
+before_script:
+  - docker info
+  - docker version
+
+
+build-stage:
   stage: build
   script:
-    - echo "Compiling the code..."
-    - echo "Compile complete."
+    - docker compose config -q
+    - docker compose build
+    - echo "build-stage done."
 
-unit-test-job:   # This job runs in the test stage.
-  stage: test    # It only starts when the job in the build stage completes successfully.
-  script:
-    - echo "Running unit tests... This will take about some seconds."
-    - sleep 5
-    - echo "Code coverage is 90%"
 
-lint-test-job:   # This job also runs in the test stage.
-  stage: test    # It can run at the same time as unit-test-job (in parallel).
+test-stage:
+  stage: test
   script:
-    - echo "Linting code... This will take about 10 seconds."
-    - sleep 10
-    - echo "No lint issues found."
-    - echo "No reason"
+  - docker compose up -d
+  - echo "Waiting for services to be Healthy..."
+  - until [ "$(docker inspect --format='{{.State.Health.Status}}' kafka)" == "healthy" ]; do sleep 5; done
+  - until [ "$(docker inspect --format='{{.State.Health.Status}}' cassandra)" == "healthy" ]; do sleep 5; done
+  - until [ "$(docker inspect --format='{{.State.Health.Status}}' spark)" == "healthy" ]; do sleep 5; done
+  - timeout 5s docker compose exec -T producer python /app/producer.py || true
+  - docker compose down
+  - echo "test-stage done."
+  when: on_success
 
-deploy-job:      # This job runs in the deploy stage.
-  stage: deploy  # It only runs when *both* jobs in the test stage complete successfully.
-  environment: production
+
+
+deploy-stage:
+  stage: deploy
+  before_script:
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
   script:
-    - echo "Deploying application..."
-    - echo "Application successfully deployed."
+    - |
+      ssh -o StrictHostKeyChecking=no amir@46.249.101.10 "
+      set -e
+
+      mkdir -p /home/amir/final_project_01
+
+      if [ ! -d /home/amir/final_project_01/.git ]; then
+        git clone git@46.249.101.10:root/final-project-01.git /home/amir/final_project_01
+      fi
+      
+      cd /home/amir/final_project_01
+
+      git pull
+      docker compose pull
+      docker compose up --build -d
+      "
+    - echo "deploy-stage done."
