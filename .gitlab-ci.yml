@@ -57,7 +57,7 @@ deploy-stage:
     - chmod 600 ~/.ssh/id_rsa
   script:
     - |
-      ssh -o StrictHostKeyChecking=no amir@46.249.101.10 "
+      ssh -o StrictHostKeyChecking=no $HOST_NAME@$HOST "
       set -e
 
       mkdir -p /home/amir/final_project_01
